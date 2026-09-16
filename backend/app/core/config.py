@@ -38,9 +38,19 @@ class Settings(BaseSettings):
     # classified as MEDIUM severity (below HIGH threshold).
     SEVERITY_MEDIUM_THRESHOLD: Decimal = Decimal("5000")
 
+    # ── Extraction / Phase 5 ──────────────────────────────────────────────
+    GEMINI_API_KEY: str = ""
+    UPLOAD_DIR: str = "uploads"
+    MAX_UPLOAD_SIZE_MB: int = 20
+
+    # Confidence gate thresholds
+    CONFIDENCE_HIGH_THRESHOLD: Decimal = Decimal("0.85")
+    CONFIDENCE_MEDIUM_THRESHOLD: Decimal = Decimal("0.60")
+
     model_config = SettingsConfigDict(
         env_file=".env", env_ignore_empty=True, extra="ignore"
     )
 
 
 settings = Settings()
+
