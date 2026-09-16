@@ -41,6 +41,7 @@ from app.services.extraction.schemas import (
     CanonicalLineItem,
     GateStatus,
 )
+from app.services.extraction.correction import get_corrected_canonical
 
 logger = logging.getLogger(__name__)
 
@@ -103,8 +104,8 @@ async def populate_invoice_from_extraction(
             "Upload a document first."
         )
 
-    # 2. Reconstruct canonical from JSONB
-    canonical = _canonical_from_jsonb(extraction.normalized_extraction)
+    # 2. Reconstruct canonical (merged with human corrections if any)
+    canonical = await get_corrected_canonical(db, invoice_id)
     if canonical is None:
         raise ExtractionNotFoundError(
             f"Extraction {extraction.id} has no normalized_extraction data."
@@ -304,4 +305,6 @@ def _canonical_line_to_invoice_item(
         line_total=item.line_total,
         tax_rate_percent=item.tax_rate_percent,
         discount=item.discount,
+        page_number=item.page_number,
+        source_text=item.source_text,
     )

@@ -132,6 +132,8 @@ class InvoiceItem(Base):
     )
     discount: Mapped[float] = mapped_column(Numeric(15, 2), nullable=False, default=0)
     line_total: Mapped[float] = mapped_column(Numeric(15, 2), nullable=False)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_text: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow

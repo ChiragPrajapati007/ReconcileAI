@@ -573,11 +573,11 @@ async def test_idempotency(session: AsyncSession):
     assert report1.overall_status == report2.overall_status == "matched"
     assert len(report1.anomalies) == len(report2.anomalies) == 0
 
-    # Verify exactly ONE audit exists
+    # Verify exactly TWO audits exist (Phase 7 preserves history)
     audit_count = await session.execute(
         select(func.count()).select_from(Audit).where(Audit.invoice_id == inv.id)
     )
-    assert audit_count.scalar() == 1
+    assert audit_count.scalar() == 2
 
     # Verify ledger has correct quantity (not doubled)
     ledger_sum = await session.execute(

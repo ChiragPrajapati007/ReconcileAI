@@ -17,6 +17,7 @@ from app.db.session import get_db
 from app.models.audit import Audit, ReconciliationResult, Anomaly, Evidence
 from app.models.invoice import Invoice
 from app.schemas.reconciliation import ReconcileResponse, ReconciliationResultOut
+from app.schemas.review import EvidenceOut, AnomalyStatusUpdateRequest, AnomalyOut
 from app.services.reconciliation.engine import reconcile_invoice, ReconciliationError
 from app.api.errors import AppError
 
@@ -134,3 +135,91 @@ async def get_reconciliation(
         overall_status=audit.reconciliation_result.overall_status,
         result=ReconciliationResultOut.model_validate(audit.reconciliation_result),
     )
+
+
+@router.get(
+    "/anomalies/{anomaly_id}/evidence",
+    response_model=list[EvidenceOut],
+    summary="Get evidence for a specific anomaly",
+)
+async def get_anomaly_evidence(
+    anomaly_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> list[EvidenceOut]:
+    """Retrieve the evidence associated with a specific anomaly."""
+    # Verify anomaly exists
+    anomaly_check = await db.execute(select(Anomaly).where(Anomaly.id == anomaly_id))
+    if anomaly_check.scalar_one_or_none() is None:
+        raise AppError(
+            status_code=404,
+            code="ANOMALY_NOT_FOUND",
+            message=f"Anomaly {anomaly_id} not found."
+        )
+
+    result = await db.execute(
+        select(Evidence).where(Evidence.anomaly_id == anomaly_id).order_by(Evidence.created_at.asc())
+    )
+    evidence_list = result.scalars().all()
+    return [EvidenceOut.model_validate(e) for e in evidence_list]
+
+
+@router.patch(
+    "/anomalies/{anomaly_id}",
+    response_model=AnomalyOut,
+    summary="Update anomaly review status",
+)
+async def update_anomaly_status(
+    anomaly_id: uuid.UUID,
+    body: AnomalyStatusUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+) -> AnomalyOut:
+    """Update the status of an anomaly.
+    
+    Allowed transitions:
+    OPEN -> REVIEWED
+    REVIEWED -> RESOLVED
+    """
+    from app.models.enums import AnomalyStatus
+    
+    result = await db.execute(
+        select(Anomaly)
+        .options(selectinload(Anomaly.evidence))
+        .where(Anomaly.id == anomaly_id)
+    )
+    anomaly = result.scalar_one_or_none()
+    
+    if anomaly is None:
+        raise AppError(
+            status_code=404,
+            code="ANOMALY_NOT_FOUND",
+            message=f"Anomaly {anomaly_id} not found."
+        )
+
+    old_status = anomaly.status
+    new_status = body.status
+
+    if old_status == new_status:
+        return AnomalyOut.model_validate(anomaly)
+
+    # Transition validation
+    valid_transitions = {
+        AnomalyStatus.OPEN: {AnomalyStatus.REVIEWED},
+        AnomalyStatus.REVIEWED: {AnomalyStatus.RESOLVED},
+        AnomalyStatus.RESOLVED: set(),
+        AnomalyStatus.ACKNOWLEDGED: {AnomalyStatus.RESOLVED}, # Fallback if existing
+        AnomalyStatus.WAIVED: set(),
+    }
+    
+    if new_status not in valid_transitions.get(old_status, set()):
+        raise AppError(
+            status_code=400,
+            code="INVALID_STATUS_TRANSITION",
+            message=f"Cannot transition anomaly from {old_status} to {new_status}."
+        )
+
+    anomaly.status = new_status
+    await db.commit()
+    await db.refresh(anomaly)
+    
+    # Needs to reload evidence correctly or the relationship will be accessible
+    return AnomalyOut.model_validate(anomaly)

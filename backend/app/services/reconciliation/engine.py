@@ -127,17 +127,19 @@ async def reconcile_invoice(
 
     invoice_items = list(invoice.items)
 
+    document_id = invoice.documents[0].id if invoice.documents else None
+
     # ── 2. No PO reference → PO_MISMATCH ─────────────────────────────
     if invoice.purchase_order_id is None:
         report = _build_no_po_report(invoice, invoice_items)
-        await _persist(session, invoice, None, report, started_at, cfg)
+        await _persist(session, invoice, None, report, started_at, cfg, document_id)
         return report
 
     # ── 3. Load PO + items ────────────────────────────────────────────
     po = await _load_po(session, invoice.purchase_order_id)
     if po is None:
         report = _build_po_not_found_report(invoice, invoice_items)
-        await _persist(session, invoice, None, report, started_at, cfg)
+        await _persist(session, invoice, None, report, started_at, cfg, document_id)
         return report
 
     po_items = list(po.items)
@@ -207,7 +209,8 @@ async def reconcile_invoice(
 
     # ── 11. Extra items (always flagged) ──────────────────────────────
     for um in match_result.unmatched_invoice_items:
-        anomalies.append(_extra_item_anomaly(um, cfg))
+        inv_item = inv_item_map[um.invoice_item_id]
+        anomalies.append(_extra_item_anomaly(um, inv_item, cfg))
 
     # ── 12. Header totals ─────────────────────────────────────────────
     line_anomaly_types = {
@@ -225,7 +228,7 @@ async def reconcile_invoice(
     report = _build_report(invoice, po, anomalies, match_result, overall_status)
 
     # ── 15. Persist ───────────────────────────────────────────────────
-    await _persist(session, invoice, po, report, started_at, cfg)
+    await _persist(session, invoice, po, report, started_at, cfg, document_id)
 
     return report
 
@@ -546,6 +549,8 @@ def _qty_overbilling_anomaly(qa, po_item, inv_item, cfg) -> AnomalyRecord:
                 field_path=f"invoice_item.quantity (line {inv_item.line_number})",
                 expected_value=str(qa.remaining_before),
                 actual_value=str(qa.current_invoice_quantity),
+                page_number=inv_item.page_number,
+                source_text=inv_item.source_text,
             ),
             EvidenceRecord(
                 source_type="po_field",
@@ -611,6 +616,8 @@ def _price_mismatch_anomaly(pc, po_item, inv_item, cfg) -> AnomalyRecord:
                 field_path=f"invoice_item.unit_price (line {inv_item.line_number})",
                 expected_value=str(pc.po_unit_price),
                 actual_value=str(pc.invoice_unit_price),
+                page_number=inv_item.page_number,
+                source_text=inv_item.source_text,
             ),
         ],
     )
@@ -641,7 +648,7 @@ def _missing_item_anomaly(um, cfg) -> AnomalyRecord:
     )
 
 
-def _extra_item_anomaly(um, cfg) -> AnomalyRecord:
+def _extra_item_anomaly(um, inv_item, cfg) -> AnomalyRecord:
     impact = round_amount(um.line_total)
     return AnomalyRecord(
         type="EXTRA_ITEM",
@@ -661,6 +668,8 @@ def _extra_item_anomaly(um, cfg) -> AnomalyRecord:
                 field_path="invoice_item.description",
                 expected_value="present on PO",
                 actual_value=um.description,
+                page_number=inv_item.page_number,
+                source_text=inv_item.source_text,
             ),
         ],
     )
@@ -677,6 +686,7 @@ async def _persist(
     report: ReconciliationReport,
     started_at: datetime,
     cfg: Settings,
+    document_id: uuid.UUID | None = None,
 ) -> None:
     """Persist audit results transactionally (idempotent).
 
@@ -687,16 +697,9 @@ async def _persist(
     """
     po_id = po.id if po else None
 
-    # ── Idempotency: clean up prior run ───────────────────────────────
-    old_audits = await session.execute(
-        select(Audit).where(
-            Audit.invoice_id == invoice.id,
-            Audit.purchase_order_id == po_id if po_id else Audit.purchase_order_id.is_(None),
-        )
-    )
-    for old in old_audits.scalars().all():
-        await session.delete(old)  # cascades to result → anomalies → evidence
-
+    # ── Idempotency: clean up prior ledger entries ─────────────────────
+    # Historical audits are preserved (Phase 7). Only the ledger is reset
+    # to reflect the latest accepted invoice quantities.
     await session.execute(
         delete(InvoiceLineLedger).where(
             InvoiceLineLedger.invoice_id == invoice.id
@@ -755,6 +758,7 @@ async def _persist(
         for ev in ar.evidence:
             evidence = Evidence(
                 anomaly_id=anomaly.id,
+                document_id=document_id,
                 source_type=EvidenceSourceType(ev.source_type),
                 field_path=ev.field_path,
                 source_text=ev.source_text,

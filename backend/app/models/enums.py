@@ -66,6 +66,7 @@ class AnomalySeverity(str, enum.Enum):
 
 class AnomalyStatus(str, enum.Enum):
     OPEN = "open"
+    REVIEWED = "reviewed"
     ACKNOWLEDGED = "acknowledged"
     RESOLVED = "resolved"
     WAIVED = "waived"
