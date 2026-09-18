@@ -25,6 +25,7 @@ from app.schemas.extraction import (
     CorrectionRequest,
     ExtractionDetailOut,
     ExtractionUploadResponse,
+    ExtractionIngestResponse,
     PopulationResultOut,
     RawExtractionOut,
     RawLineItemOut,
@@ -46,10 +47,112 @@ from app.services.extraction.populator import (
     ExtractionNotFoundError,
     populate_invoice_from_extraction,
 )
-from app.services.extraction.schemas import ExtractionResult
+from app.services.extraction.schemas import ExtractionResult, GateStatus
 from app.services.reconciliation.engine import reconcile_invoice, ReconciliationError
 
 router = APIRouter()
+
+
+@router.post(
+    "/ingest",
+    response_model=ExtractionIngestResponse,
+    summary="Autonomous end-to-end invoice ingestion",
+)
+async def ingest_document(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+) -> ExtractionIngestResponse:
+    """
+    Ingest a new document, create a provisional invoice, run extraction,
+    and automatically reconcile if confidence is high enough.
+    Returns the new invoice ID for frontend navigation.
+    """
+    # 1. Validate file
+    content = await file.read()
+    try:
+        validate_file(file.filename or "unknown", content, file.content_type or "application/pdf")
+        ingested = save_document(content, file.filename or "unknown", file.content_type or "application/pdf")
+    except IngestionError as e:
+        raise AppError(status_code=400, code="INVALID_FILE", message=str(e))
+
+    # 2. Create Provisional Invoice
+    invoice_id = uuid.uuid4()
+    provisional_invoice = Invoice(
+        id=invoice_id,
+        invoice_number=f"PROV-{invoice_id.hex[:8].upper()}",
+        vendor_name="PROVISIONAL INVOICE",
+        # Use a timezone-aware UTC datetime for dummy date
+        invoice_date=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+        status=__import__("app.models.enums", fromlist=["InvoiceStatus"]).InvoiceStatus.DRAFT,
+    )
+    db.add(provisional_invoice)
+    await db.flush()
+
+    # 3. Create Document Record
+    doc = InvoiceDocument(
+        invoice_id=invoice_id,
+        filename=ingested.filename,
+        original_filename=ingested.original_filename,
+        mime_type=ingested.mime_type,
+        file_size=ingested.file_size,
+        storage_path=ingested.storage_path,
+        document_hash=ingested.document_hash,
+    )
+    db.add(doc)
+    await db.flush()
+
+    provider = _get_provider()
+    if provider is None:
+        raise AppError(
+            status_code=503,
+            code="PROVIDER_NOT_CONFIGURED",
+            message="No extraction provider configured. Set GEMINI_API_KEY in .env.",
+        )
+
+    # 4. Run Extraction
+    try:
+        await run_extraction_pipeline(
+            db=db,
+            invoice_id=invoice_id,
+            document_id=doc.id,
+            ingested=ingested,
+            file_content=content,
+            provider=provider,
+        )
+    except ExtractionPipelineError as e:
+        await db.rollback()
+        raise AppError(status_code=500, code="EXTRACTION_FAILED", message=str(e))
+
+    # 5. Populate and Reconcile if eligible
+    gate_status_str = "blocked"
+    reconciled = False
+    
+    try:
+        pop_result = await populate_invoice_from_extraction(db, invoice_id)
+        gate_status_str = pop_result.gate_status.value
+        
+        if pop_result.eligible:
+            # High confidence, try to reconcile
+            await reconcile_invoice(db, invoice_id)
+            reconciled = True
+            
+    except GateBlockedError as e:
+        gate_status_str = e.gate_status.value
+        # Safe to ignore, remains provisional / DRAFT for review
+    except Exception as e:
+        # Some other failure during population or reconciliation
+        # Don't fail the whole request, leave it in reviewable state
+        import logging
+        logging.getLogger(__name__).exception("Failed to populate/reconcile after ingestion")
+
+    await db.commit()
+
+    return ExtractionIngestResponse(
+        invoice_id=invoice_id,
+        document_id=doc.id,
+        gate_status=gate_status_str,
+        reconciled=reconciled,
+    )
 
 
 def _get_provider():

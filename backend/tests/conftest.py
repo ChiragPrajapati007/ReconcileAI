@@ -14,8 +14,8 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-TEST_DATABASE_URL = "postgresql+asyncpg://postgres:password@localhost:5432/reconcileai_test"
-ADMIN_DATABASE_URL = "postgresql+asyncpg://postgres:password@localhost:5432/postgres"
+TEST_DATABASE_URL = "postgresql+asyncpg://postgres:password@127.0.0.1:5432/reconcileai_test"
+ADMIN_DATABASE_URL = "postgresql+asyncpg://postgres:password@127.0.0.1:5432/postgres"
 
 
 @pytest_asyncio.fixture

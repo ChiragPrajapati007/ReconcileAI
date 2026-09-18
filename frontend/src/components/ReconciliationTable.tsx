@@ -38,9 +38,7 @@ export default function ReconciliationTable({ po, invoice, reconciliation, onAno
       return <span className="text-emerald-600 font-bold">✓</span>;
     }
     
-    // Check if any is open
-    const hasOpen = anomalies.some(a => a.status === 'open');
-    const hasReviewed = anomalies.some(a => a.status === 'reviewed');
+    // Return anomalies as buttons
     
     return (
       <div className="flex flex-col gap-1 items-end">

@@ -39,6 +39,32 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json();
 }
 
+async function fetchMultipartApi<T>(path: string, formData: FormData): Promise<T> {
+  const url = `${BASE_URL}${path}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    body: formData,
+    // Note: Do not set Content-Type header manually when using FormData
+  });
+
+  if (!response.ok) {
+    let errCode = 'UNKNOWN_ERROR';
+    let errMessage = response.statusText;
+    try {
+      const errorData = await response.json();
+      if (errorData.detail && errorData.detail.code) {
+        errCode = errorData.detail.code;
+        errMessage = errorData.detail.message;
+      }
+    } catch {
+      // Ignored
+    }
+    throw new ApiError(response.status, errCode, errMessage);
+  }
+
+  return response.json();
+}
+
 import {
   PaginatedResponse,
   InvoiceOut,
@@ -63,10 +89,22 @@ export const apiClient = {
       fetchApi<AuditOut>(`/api/invoices/${id}/audit`),
   },
   purchaseOrders: {
+    list: (page = 1) =>
+      fetchApi<PaginatedResponse<POOut>>(`/api/purchase-orders?page=${page}`),
+    create: (payload: Record<string, unknown>) =>
+      fetchApi<POOut>(`/api/purchase-orders`, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      }),
     get: (id: string) => 
       fetchApi<POOut>(`/api/purchase-orders/${id}`),
   },
   extraction: {
+    ingest: (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      return fetchMultipartApi<Record<string, unknown>>(`/api/extraction/ingest`, formData);
+    },
     get: (invoiceId: string) => 
       fetchApi<ExtractionDetailOut>(`/api/extraction/${invoiceId}`),
     submitCorrection: (invoiceId: string, payload: CorrectionRequest) =>

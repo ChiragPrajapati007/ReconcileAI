@@ -169,3 +169,12 @@ class CorrectionOut(BaseModel):
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+import uuid
+
+class ExtractionIngestResponse(BaseModel):
+    """Response returned from the autonomous POST /api/extraction/ingest endpoint."""
+    invoice_id: uuid.UUID
+    document_id: uuid.UUID
+    gate_status: str
+    reconciled: bool

@@ -1,7 +1,7 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import ReconciliationTable from './ReconciliationTable';
 import { InvoiceOut, POOut, ReconciliationResultOut } from '@/lib/api/types';
 
