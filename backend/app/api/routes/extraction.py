@@ -75,7 +75,18 @@ async def ingest_document(
     except IngestionError as e:
         raise AppError(status_code=400, code="INVALID_FILE", message=str(e))
 
-    # 2. Create Provisional Invoice
+    # 3.5 Check for duplicate document hash (Rule A)
+    dup_doc = await db.execute(
+        select(InvoiceDocument).where(InvoiceDocument.document_hash == ingested.document_hash)
+    )
+    if dup_doc.scalars().first() is not None:
+        raise AppError(
+            status_code=409, 
+            code="DUPLICATE_DOCUMENT", 
+            message="An identical document has already been uploaded."
+        )
+
+    # 4. Create Provisional Invoice
     invoice_id = uuid.uuid4()
     provisional_invoice = Invoice(
         id=invoice_id,
@@ -88,7 +99,7 @@ async def ingest_document(
     db.add(provisional_invoice)
     await db.flush()
 
-    # 3. Create Document Record
+    # 5. Create Document Record
     doc = InvoiceDocument(
         invoice_id=invoice_id,
         filename=ingested.filename,
@@ -100,6 +111,10 @@ async def ingest_document(
     )
     db.add(doc)
     await db.flush()
+    doc_id = doc.id
+    
+    # COMMIT 1: Save provisional invoice and document safely
+    await db.commit()
 
     provider = _get_provider()
     if provider is None:
@@ -109,7 +124,7 @@ async def ingest_document(
             message="No extraction provider configured. Set GEMINI_API_KEY in .env.",
         )
 
-    # 4. Run Extraction
+    # 6. Run Extraction
     try:
         await run_extraction_pipeline(
             db=db,
@@ -121,9 +136,13 @@ async def ingest_document(
         )
     except ExtractionPipelineError as e:
         await db.rollback()
-        raise AppError(status_code=500, code="EXTRACTION_FAILED", message=str(e))
+        # Return a meaningful error but keep the invoice in DRAFT so user can retry/recover
+        raise AppError(status_code=500, code="EXTRACTION_FAILED", message=f"Extraction pipeline error: {str(e)}")
 
-    # 5. Populate and Reconcile if eligible
+    # COMMIT 2: Persist extraction results (success or failure from provider)
+    await db.commit()
+
+    # 7. Populate and Reconcile if eligible
     gate_status_str = "blocked"
     reconciled = False
     
@@ -136,20 +155,22 @@ async def ingest_document(
             await reconcile_invoice(db, invoice_id)
             reconciled = True
             
+        # COMMIT 3: Persist population & reconciliation changes
+        await db.commit()
     except GateBlockedError as e:
+        await db.rollback()
         gate_status_str = e.gate_status.value
         # Safe to ignore, remains provisional / DRAFT for review
     except Exception as e:
         # Some other failure during population or reconciliation
-        # Don't fail the whole request, leave it in reviewable state
+        # CRITICAL: Rollback so partial reconciliation anomalies/ledgers aren't persisted
+        await db.rollback()
         import logging
         logging.getLogger(__name__).exception("Failed to populate/reconcile after ingestion")
 
-    await db.commit()
-
     return ExtractionIngestResponse(
         invoice_id=invoice_id,
-        document_id=doc.id,
+        document_id=doc_id,
         gate_status=gate_status_str,
         reconciled=reconciled,
     )
@@ -290,6 +311,20 @@ async def upload_and_extract(
     # Save document to filesystem
     ingested = save_document(content, file.filename or "unknown", mime_type)
 
+    # Duplicate check for the new file (exclude this invoice's current docs to allow retrying)
+    dup_doc = await db.execute(
+        select(InvoiceDocument).where(
+            InvoiceDocument.document_hash == ingested.document_hash,
+            InvoiceDocument.invoice_id != invoice_id
+        )
+    )
+    if dup_doc.scalars().first() is not None:
+        raise AppError(
+            status_code=409, 
+            code="DUPLICATE_DOCUMENT", 
+            message="An identical document has already been uploaded for another invoice."
+        )
+
     # Persist InvoiceDocument record
     doc = InvoiceDocument(
         invoice_id=invoice_id,
@@ -301,7 +336,10 @@ async def upload_and_extract(
         document_hash=ingested.document_hash,
     )
     db.add(doc)
-    await db.flush()  # Get the doc.id
+    await db.flush()
+    doc_id = doc.id
+    # COMMIT 1: Save document safely before extraction
+    await db.commit()
 
     # Get provider
     provider = _get_provider()
@@ -313,18 +351,22 @@ async def upload_and_extract(
         )
 
     # Run extraction pipeline
-    result = await run_extraction_pipeline(
-        db=db,
-        invoice_id=invoice_id,
-        document_id=doc.id,
-        ingested=ingested,
-        file_content=content,
-        provider=provider,
-    )
+    try:
+        result = await run_extraction_pipeline(
+            db=db,
+            invoice_id=invoice_id,
+            document_id=doc_id,
+            ingested=ingested,
+            file_content=content,
+            provider=provider,
+        )
+        # COMMIT 2: Save extraction results
+        await db.commit()
+    except ExtractionPipelineError as e:
+        await db.rollback()
+        raise AppError(status_code=500, code="EXTRACTION_FAILED", message=f"Extraction pipeline error: {str(e)}")
 
-    await db.commit()
-
-    return _build_upload_response(doc.id, result)
+    return _build_upload_response(doc_id, result)
 
 
 @router.get(

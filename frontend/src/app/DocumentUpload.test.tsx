@@ -1,4 +1,3 @@
-/// <reference types="@testing-library/jest-dom" />
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
@@ -70,7 +69,7 @@ describe('DocumentUpload Component', () => {
 
     await waitFor(() => {
       expect(apiClient.extraction.ingest).toHaveBeenCalledWith(file);
-      expect(mockPush).toHaveBeenCalledWith('/workspace/123-abc');
+      expect(mockPush).toHaveBeenCalledWith('/invoices/123-abc');
     });
   });
 
@@ -89,6 +88,34 @@ describe('DocumentUpload Component', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Network failure')).toBeInTheDocument();
+    });
+  });
+
+  it('rejects files larger than 20MB', async () => {
+    render(<DocumentUpload />);
+    
+    // Create a dummy file and mock its size
+    const file = new File(['dummy'], 'large.pdf', { type: 'application/pdf' });
+    Object.defineProperty(file, 'size', { value: 25 * 1024 * 1024 }); // 25MB
+    
+    const input = document.querySelector('input[type="file"]')!;
+    fireEvent.change(input, { target: { files: [file] } });
+    
+    await waitFor(() => {
+      expect(screen.getByText('File exceeds 20MB limit.')).toBeInTheDocument();
+    });
+  });
+
+  it('rejects unsupported file types', async () => {
+    render(<DocumentUpload />);
+    
+    const file = new File(['dummy'], 'document.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+    
+    const input = document.querySelector('input[type="file"]')!;
+    fireEvent.change(input, { target: { files: [file] } });
+    
+    await waitFor(() => {
+      expect(screen.getByText('Only PDF and image files are supported.')).toBeInTheDocument();
     });
   });
 });

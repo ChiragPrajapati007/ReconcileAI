@@ -54,6 +54,30 @@ export default function POCreateForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Client-side validation
+    if (items.length === 0) {
+      setError("Purchase order must have at least one line item.");
+      return;
+    }
+    
+    for (const item of items) {
+      if (!item.description || item.description.trim() === '') {
+        setError(`Description is required for line item ${item.line_number}.`);
+        return;
+      }
+      const q = parseFloat(item.quantity);
+      if (isNaN(q) || q <= 0) {
+        setError(`Quantity must be greater than 0 for line item ${item.line_number}.`);
+        return;
+      }
+      const u = parseFloat(item.unit_price);
+      if (isNaN(u) || u < 0) {
+        setError(`Unit price cannot be negative for line item ${item.line_number}.`);
+        return;
+      }
+    }
+
     setLoading(true);
     setError(null);
     setSuccess(false);

@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { InvoiceOut, POOut, ExtractionDetailOut, ReconcileResponse, AnomalyOut, EvidenceOut } from '@/lib/api/types';
+import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api/client';
 import ReconciliationTable from '@/components/ReconciliationTable';
 import AuditTimeline from '@/components/AuditTimeline';
@@ -13,8 +14,8 @@ interface WorkspaceProps {
   reconciliation?: ReconcileResponse | null;
 }
 
-export default function ReconciliationWorkspace({ invoice, po, extraction, reconciliation: initialReconciliation }: WorkspaceProps) {
-  const [reconciliation, setReconciliation] = useState(initialReconciliation);
+export default function ReconciliationWorkspace({ invoice, po, extraction, reconciliation }: WorkspaceProps) {
+  const router = useRouter();
   const [selectedAnomaly, setSelectedAnomaly] = useState<AnomalyOut | null>(null);
   const [evidence, setEvidence] = useState<EvidenceOut[]>([]);
   const [loadingEvidence, setLoadingEvidence] = useState(false);
@@ -42,19 +43,8 @@ export default function ReconciliationWorkspace({ invoice, po, extraction, recon
     if (!selectedAnomaly) return;
     try {
       const updated = await apiClient.reconciliation.updateAnomalyStatus(selectedAnomaly.id, 'reviewed');
-      // Update local state
-      if (reconciliation) {
-        setReconciliation({
-          ...reconciliation,
-          result: {
-            ...reconciliation.result,
-            anomalies: reconciliation.result.anomalies.map(a => 
-              a.id === updated.id ? updated : a
-            )
-          }
-        });
-        setSelectedAnomaly(updated);
-      }
+      setSelectedAnomaly(updated);
+      router.refresh();
     } catch (e) {
       console.error('Failed to mark reviewed', e);
     }
@@ -64,10 +54,8 @@ export default function ReconciliationWorkspace({ invoice, po, extraction, recon
     setResolving(true);
     try {
       await apiClient.extraction.reconcile(invoice.id, true);
-      // Re-fetch reconciliation
-      const newRecon = await apiClient.reconciliation.get(invoice.id);
-      setReconciliation(newRecon);
       setSelectedAnomaly(null);
+      router.refresh();
     } catch (e) {
       console.error('Failed to rerun reconciliation', e);
     } finally {

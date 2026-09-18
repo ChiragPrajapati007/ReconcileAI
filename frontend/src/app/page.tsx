@@ -45,7 +45,7 @@ export default async function DashboardPage() {
                     <td className="py-3 px-4 text-sm">
                       <div className="flex gap-4 items-center">
                         <Link 
-                          href={`/workspace/${inv.id}`}
+                          href={`/invoices/${inv.id}`}
                           className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
                             inv.status === 'RECONCILED' ? 'bg-green-100 text-green-800' :
                             inv.status === 'UNDER_AUDIT' ? 'bg-yellow-100 text-yellow-800' :

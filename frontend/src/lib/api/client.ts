@@ -26,9 +26,14 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
     let errMessage = response.statusText;
     try {
       const errorData = await response.json();
-      if (errorData.detail && errorData.detail.code) {
+      if (errorData.error && errorData.error.code) {
+        errCode = errorData.error.code;
+        errMessage = errorData.error.message;
+      } else if (errorData.detail && errorData.detail.code) {
         errCode = errorData.detail.code;
         errMessage = errorData.detail.message;
+      } else if (errorData.detail && typeof errorData.detail === 'string') {
+        errMessage = errorData.detail;
       }
     } catch {
       // Ignored if not JSON
@@ -52,9 +57,14 @@ async function fetchMultipartApi<T>(path: string, formData: FormData): Promise<T
     let errMessage = response.statusText;
     try {
       const errorData = await response.json();
-      if (errorData.detail && errorData.detail.code) {
+      if (errorData.error && errorData.error.code) {
+        errCode = errorData.error.code;
+        errMessage = errorData.error.message;
+      } else if (errorData.detail && errorData.detail.code) {
         errCode = errorData.detail.code;
         errMessage = errorData.detail.message;
+      } else if (errorData.detail && typeof errorData.detail === 'string') {
+        errMessage = errorData.detail;
       }
     } catch {
       // Ignored

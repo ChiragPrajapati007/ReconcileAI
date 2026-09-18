@@ -14,7 +14,22 @@ export default function DocumentUpload() {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      setFile(e.target.files[0]);
+      const selectedFile = e.target.files[0];
+      
+      // Validation
+      if (selectedFile.size > 20 * 1024 * 1024) {
+        setError("File exceeds 20MB limit.");
+        setFile(null);
+        return;
+      }
+      
+      if (!selectedFile.type.startsWith('image/') && selectedFile.type !== 'application/pdf') {
+        setError("Only PDF and image files are supported.");
+        setFile(null);
+        return;
+      }
+
+      setFile(selectedFile);
       setError(null);
     }
   };
@@ -29,11 +44,11 @@ export default function DocumentUpload() {
       
       // Navigate to the reconciliation workspace if ingestion passes the AUTO gate
       if (response.gate_status === 'AUTO') {
-        router.push(`/workspace/${response.invoice_id}`);
+        router.push(`/invoices/${response.invoice_id}`);
       } else {
         // If it got blocked or needs review, we still navigate to the workspace 
         // which will show the appropriate state.
-        router.push(`/workspace/${response.invoice_id}`);
+        router.push(`/invoices/${response.invoice_id}`);
       }
     } catch (err: unknown) {
       console.error(err);
@@ -51,7 +66,22 @@ export default function DocumentUpload() {
         onDrop={(e) => {
           e.preventDefault();
           if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-            setFile(e.dataTransfer.files[0]);
+            const selectedFile = e.dataTransfer.files[0];
+            
+            // Validation
+            if (selectedFile.size > 20 * 1024 * 1024) {
+              setError("File exceeds 20MB limit.");
+              setFile(null);
+              return;
+            }
+            
+            if (!selectedFile.type.startsWith('image/') && selectedFile.type !== 'application/pdf') {
+              setError("Only PDF and image files are supported.");
+              setFile(null);
+              return;
+            }
+
+            setFile(selectedFile);
             setError(null);
           }
         }}
